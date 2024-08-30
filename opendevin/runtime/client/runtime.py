@@ -4,9 +4,11 @@ import tempfile
 import uuid
 from typing import Optional
 from zipfile import ZipFile
+import subprocess
 
 import aiohttp
 import docker
+from docker.types import DeviceRequest
 import tenacity
 
 from opendevin.core.config import AppConfig
@@ -155,6 +157,14 @@ class EventStreamRuntime(Runtime):
                 )
             else:
                 browsergym_arg = ""
+            # enable gpu if available in the host
+            enable_gpu = check_nvidia_smi()
+            device_requests = (
+                [DeviceRequest(count=-1, capabilities=[["gpu"]])]
+                if enable_gpu
+                else None
+            )
+
             container = self.docker_client.containers.run(
                 self.container_image,
                 command=(
@@ -174,6 +184,7 @@ class EventStreamRuntime(Runtime):
                 detach=True,
                 environment={"DEBUG": "true"} if self.config.debug else None,
                 volumes=volumes,
+                device_requests=device_requests,
             )
             logger.info(f"Container started. Server url: {self.api_url}")
             return container
@@ -382,3 +393,27 @@ class EventStreamRuntime(Runtime):
             raise TimeoutError("List files operation timed out")
         except Exception as e:
             raise RuntimeError(f"List files operation failed: {str(e)}")
+
+
+def check_nvidia_smi() -> bool:
+    try:
+        # Run nvidia-smi command and capture output
+        result = subprocess.run(
+            ["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+
+        if result.returncode == 0:
+            logger.info("`nvidia-smi` command executed successfully. GPU avaialable.")
+            return True
+        else:
+            logger.error("`nvidia-smi` command failed.")
+            logger.error(result.stderr)
+            return False
+    except FileNotFoundError:
+        logger.error(
+            "`nvidia-smi` command not found. GPU might not be installed or the drivers are not set up correctly."
+        )
+        return False
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        return False
