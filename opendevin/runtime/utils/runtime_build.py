@@ -225,6 +225,7 @@ def _check_image_exists(image_name: str, docker_client: docker.DockerClient) -> 
     logger.info(f"Checking if image [{image_name}] exists in the registry and locally")
     # Try to pull the new image from the registry
     try:
+        logger.info(f"Pulling {image_name}")
         docker_client.images.pull(image_name)
     except Exception:
         logger.info(f"Cannot pull image {image_name} directly")
