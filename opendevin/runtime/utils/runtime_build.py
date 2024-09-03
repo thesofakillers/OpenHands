@@ -13,17 +13,17 @@ import opendevin
 from opendevin.core.logger import opendevin_logger as logger
 
 RUNTIME_IMAGE_REPO = os.getenv(
-    'OD_RUNTIME_RUNTIME_IMAGE_REPO', 'ghcr.io/opendevin/od_runtime'
+    "OD_RUNTIME_RUNTIME_IMAGE_REPO", "ghcr.io/opendevin/od_runtime"
 )
 
 
 def _get_package_version():
     """Read the version from pyproject.toml as the other one may be outdated."""
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(opendevin.__file__)))
-    pyproject_path = os.path.join(project_root, 'pyproject.toml')
-    with open(pyproject_path, 'r') as f:
+    pyproject_path = os.path.join(project_root, "pyproject.toml")
+    with open(pyproject_path, "r") as f:
         pyproject_data = toml.load(f)
-    return pyproject_data['tool']['poetry']['version']
+    return pyproject_data["tool"]["poetry"]["version"]
 
 
 def _create_project_source_dist():
@@ -31,35 +31,36 @@ def _create_project_source_dist():
     # Copy the project directory to the container
     # get the location of "opendevin" package
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(opendevin.__file__)))
-    logger.info(f'Using project root: {project_root}')
+    logger.info(f"Using project root: {project_root}")
 
     # run "python -m build -s" on project_root
-    result = subprocess.run(['python', '-m', 'build', '-s', project_root])
+    result = subprocess.run(["python", "-m", "build", "-s", project_root])
     if result.returncode != 0:
-        logger.error(f'Build failed: {result}')
-        raise Exception(f'Build failed: {result}')
+        logger.error(f"Build failed: {result}")
+        raise Exception(f"Build failed: {result}")
 
     # Fetch the correct version from pyproject.toml
     package_version = _get_package_version()
     tarball_path = os.path.join(
-        project_root, 'dist', f'opendevin-{package_version}.tar.gz'
+        project_root, "dist", f"opendevin-{package_version}.tar.gz"
     )
     if not os.path.exists(tarball_path):
-        logger.error(f'Source distribution not found at {tarball_path}')
-        raise Exception(f'Source distribution not found at {tarball_path}')
-    logger.info(f'Source distribution created at {tarball_path}')
+        logger.error(f"Source distribution not found at {tarball_path}")
+        raise Exception(f"Source distribution not found at {tarball_path}")
+    logger.info(f"Source distribution created at {tarball_path}")
 
     return tarball_path
 
 
 def _put_source_code_to_dir(temp_dir: str):
     """Put the source code of OpenDevin to the temp_dir/code."""
+    logger.info(f"Putting source code to {temp_dir}")
     tarball_path = _create_project_source_dist()
     filename = os.path.basename(tarball_path)
-    filename = filename.removesuffix('.tar.gz')
+    filename = filename.removesuffix(".tar.gz")
 
     # move the tarball to temp_dir
-    _res = shutil.copy(tarball_path, os.path.join(temp_dir, 'project.tar.gz'))
+    _res = shutil.copy(tarball_path, os.path.join(temp_dir, "project.tar.gz"))
     if _res:
         os.remove(tarball_path)
     logger.info(
@@ -67,11 +68,11 @@ def _put_source_code_to_dir(temp_dir: str):
     )
 
     # unzip the tarball
-    shutil.unpack_archive(os.path.join(temp_dir, 'project.tar.gz'), temp_dir)
+    shutil.unpack_archive(os.path.join(temp_dir, "project.tar.gz"), temp_dir)
     # remove the tarball
-    os.remove(os.path.join(temp_dir, 'project.tar.gz'))
+    os.remove(os.path.join(temp_dir, "project.tar.gz"))
     # rename the directory to the 'code'
-    os.rename(os.path.join(temp_dir, filename), os.path.join(temp_dir, 'code'))
+    os.rename(os.path.join(temp_dir, filename), os.path.join(temp_dir, "code"))
     logger.info(f'Unpacked source code directory: {os.path.join(temp_dir, "code")}')
 
 
@@ -81,16 +82,17 @@ def _generate_dockerfile(
     extra_deps: str | None = None,
 ) -> str:
     """Generate the Dockerfile content for the eventstream runtime image based on user-provided base image."""
+    logger.info("Generating Dockerfile content")
     env = Environment(
         loader=FileSystemLoader(
-            searchpath=os.path.join(os.path.dirname(__file__), 'runtime_templates')
+            searchpath=os.path.join(os.path.dirname(__file__), "runtime_templates")
         )
     )
-    template = env.get_template('Dockerfile.j2')
+    template = env.get_template("Dockerfile.j2")
     dockerfile_content = template.render(
         base_image=base_image,
         skip_init=skip_init,
-        extra_deps=extra_deps if extra_deps is not None else '',
+        extra_deps=extra_deps if extra_deps is not None else "",
     )
     return dockerfile_content
 
@@ -113,20 +115,20 @@ def prep_docker_build_folder(
     )
     logger.info(
         (
-            f'===== Dockerfile content =====\n'
-            f'{dockerfile_content}\n'
-            f'==============================='
+            f"===== Dockerfile content =====\n"
+            f"{dockerfile_content}\n"
+            f"==============================="
         )
     )
-    with open(os.path.join(dir_path, 'Dockerfile'), 'w') as file:
+    with open(os.path.join(dir_path, "Dockerfile"), "w") as file:
         file.write(dockerfile_content)
 
-    hash = dirhash(dir_path, 'md5')
+    hash = dirhash(dir_path, "md5")
     logger.info(
-        f'Input base image: {base_image}\n'
-        f'Skip init: {skip_init}\n'
-        f'Extra deps: {extra_deps}\n'
-        f'Hash for docker build directory [{dir_path}] (contents: {os.listdir(dir_path)}): {hash}\n'
+        f"Input base image: {base_image}\n"
+        f"Skip init: {skip_init}\n"
+        f"Extra deps: {extra_deps}\n"
+        f"Hash for docker build directory [{dir_path}] (contents: {os.listdir(dir_path)}): {hash}\n"
     )
     return hash
 
@@ -155,7 +157,8 @@ def _build_sandbox_image(
             e.g., ubuntu:latest -> od_runtime:ubuntu_tag_latest
     """
     # 1. Always directly build and tag using the dir_hash
-    target_image_hash_name = f'{target_image_repo}:{target_image_hash_tag}'
+    logger.info("Building sandbox image")
+    target_image_hash_name = f"{target_image_repo}:{target_image_hash_tag}"
     try:
         build_logs = docker_client.api.build(
             path=docker_folder,
@@ -164,33 +167,33 @@ def _build_sandbox_image(
             decode=True,
         )
     except docker.errors.BuildError as e:
-        logger.error(f'Sandbox image build failed: {e}')
+        logger.error(f"Sandbox image build failed: {e}")
         raise e
 
     for log in build_logs:
-        if 'stream' in log:
-            print(log['stream'].strip())
-        elif 'error' in log:
-            logger.error(log['error'].strip())
+        if "stream" in log:
+            print(log["stream"].strip())
+        elif "error" in log:
+            logger.error(log["error"].strip())
         else:
             logger.info(str(log))
 
     # 2. Re-tag the image with a more generic tag (as somewhat of "latest" tag)
-    logger.info(f'Image [{target_image_hash_name}] build finished.')
+    logger.info(f"Image [{target_image_hash_name}] build finished.")
     image = docker_client.images.get(target_image_hash_name)
     image.tag(target_image_repo, target_image_tag)
     logger.info(
-        f'Re-tagged image [{target_image_hash_name}] with more generic tag [{target_image_tag}]'
+        f"Re-tagged image [{target_image_hash_name}] with more generic tag [{target_image_tag}]"
     )
 
     # check if the image is built successfully
     image = docker_client.images.get(target_image_hash_name)
     if image is None:
         raise RuntimeError(
-            f'Build failed: Image [{target_image_repo}:{target_image_hash_tag}] not found'
+            f"Build failed: Image [{target_image_repo}:{target_image_hash_tag}] not found"
         )
     logger.info(
-        f'Image [{target_image_repo}:{target_image_hash_tag}] (hash: [{target_image_tag}]) built successfully'
+        f"Image [{target_image_repo}:{target_image_hash_tag}] (hash: [{target_image_tag}]) built successfully"
     )
     return target_image_hash_name
 
@@ -198,20 +201,20 @@ def _build_sandbox_image(
 def get_runtime_image_repo_and_tag(base_image: str) -> tuple[str, str]:
     if RUNTIME_IMAGE_REPO in base_image:
         logger.info(
-            f'The provided image [{base_image}] is a already a valid od_runtime image.\n'
-            f'Will try to reuse it as is.'
+            f"The provided image [{base_image}] is a already a valid od_runtime image.\n"
+            f"Will try to reuse it as is."
         )
-        if ':' not in base_image:
-            base_image = base_image + ':latest'
-        repo, tag = base_image.split(':')
+        if ":" not in base_image:
+            base_image = base_image + ":latest"
+        repo, tag = base_image.split(":")
         return repo, tag
     else:
-        if ':' not in base_image:
-            base_image = base_image + ':latest'
-        [repo, tag] = base_image.split(':')
-        repo = repo.replace('/', '___')
+        if ":" not in base_image:
+            base_image = base_image + ":latest"
+        [repo, tag] = base_image.split(":")
+        repo = repo.replace("/", "___")
         od_version = _get_package_version()
-        return RUNTIME_IMAGE_REPO, f'od_v{od_version}_image_{repo}_tag_{tag}'
+        return RUNTIME_IMAGE_REPO, f"od_v{od_version}_image_{repo}_tag_{tag}"
 
 
 def _check_image_exists(image_name: str, docker_client: docker.DockerClient) -> bool:
@@ -219,11 +222,12 @@ def _check_image_exists(image_name: str, docker_client: docker.DockerClient) -> 
 
     image_name is f'{repo}:{tag}'
     """
+    logger.info(f"Checking if image [{image_name}] exists in the registry and locally")
     # Try to pull the new image from the registry
     try:
         docker_client.images.pull(image_name)
     except Exception:
-        logger.info(f'Cannot pull image {image_name} directly')
+        logger.info(f"Cannot pull image {image_name} directly")
 
     images = docker_client.images.list()
     if images:
@@ -257,20 +261,24 @@ def build_runtime_image(
 
     # hash image name, if the hash matches, it means the image is already
     # built from scratch with the *exact SAME source code* on the exact Dockerfile
-    hash_runtime_image_name = f'{runtime_image_repo}:{from_scratch_hash}'
+    hash_runtime_image_name = f"{runtime_image_repo}:{from_scratch_hash}"
 
     # non-hash generic image name, it could contains *similar* dependencies
     # but *might* not exactly match the state of the source code.
     # It resembles the "latest" tag in the docker image naming convention for
     # a particular {repo}:{tag} pair (e.g., ubuntu:latest -> od_runtime:ubuntu_tag_latest)
     # we will build from IT to save time if the `from_scratch_hash` is not found
-    generic_runtime_image_name = f'{runtime_image_repo}:{runtime_image_tag}'
+    generic_runtime_image_name = f"{runtime_image_repo}:{runtime_image_tag}"
+
+    logger.info(f"runtime_image_repo {runtime_image_repo}")
+    logger.info(f"runtime_image_tag {runtime_image_tag}")
+    logger.info(f"from_scratch_hash {from_scratch_hash}")
 
     # 1. If the image exists with the same hash, we will reuse it as is
     if _check_image_exists(hash_runtime_image_name, docker_client):
         logger.info(
-            f'Image [{hash_runtime_image_name}] exists with matched hash for Docker build folder.\n'
-            'Will reuse it as is.'
+            f"Image [{hash_runtime_image_name}] exists with matched hash for Docker build folder.\n"
+            "Will reuse it as is."
         )
         return hash_runtime_image_name
 
@@ -279,9 +287,9 @@ def build_runtime_image(
     # from re-building the dependencies (e.g., poetry install, apt install)
     elif _check_image_exists(generic_runtime_image_name, docker_client):
         logger.info(
-            f'Cannot find matched hash for image [{hash_runtime_image_name}]\n'
-            f'Will try to re-build it from latest [{generic_runtime_image_name}] image to potentially save '
-            f'time for dependencies installation.\n'
+            f"Cannot find matched hash for image [{hash_runtime_image_name}]\n"
+            f"Will try to re-build it from latest [{generic_runtime_image_name}] image to potentially save "
+            f"time for dependencies installation.\n"
         )
 
         cur_docker_build_folder = docker_build_folder or tempfile.mkdtemp()
@@ -295,7 +303,7 @@ def build_runtime_image(
         )
         assert (
             _skip_init_hash != from_scratch_hash
-        ), f'The skip_init hash [{_skip_init_hash}] should not match the existing hash [{from_scratch_hash}]'
+        ), f"The skip_init hash [{_skip_init_hash}] should not match the existing hash [{from_scratch_hash}]"
 
         if not dry_run:
             _build_sandbox_image(
@@ -311,7 +319,7 @@ def build_runtime_image(
             )
         else:
             logger.info(
-                f'Dry run: Skipping image build for [{generic_runtime_image_name}]'
+                f"Dry run: Skipping image build for [{generic_runtime_image_name}]"
             )
         if docker_build_folder is None:
             shutil.rmtree(cur_docker_build_folder)
@@ -319,6 +327,7 @@ def build_runtime_image(
     # 3. If the image is not found AND we cannot re-use the non-hash latest relavant image,
     # we will build it completely from scratch
     else:
+        logger.info("Building from scratch")
         cur_docker_build_folder = docker_build_folder or tempfile.mkdtemp()
         _new_from_scratch_hash = prep_docker_build_folder(
             cur_docker_build_folder,
@@ -328,7 +337,7 @@ def build_runtime_image(
         )
         assert (
             _new_from_scratch_hash == from_scratch_hash
-        ), f'The new from scratch hash [{_new_from_scratch_hash}] does not match the existing hash [{from_scratch_hash}]'
+        ), f"The new from scratch hash [{_new_from_scratch_hash}] does not match the existing hash [{from_scratch_hash}]"
 
         if not dry_run:
             _build_sandbox_image(
@@ -341,28 +350,28 @@ def build_runtime_image(
             )
         else:
             logger.info(
-                f'Dry run: Skipping image build for [{generic_runtime_image_name}]'
+                f"Dry run: Skipping image build for [{generic_runtime_image_name}]"
             )
 
         if docker_build_folder is None:
             shutil.rmtree(cur_docker_build_folder)
 
-    return f'{runtime_image_repo}:{from_scratch_hash}'
+    return f"{runtime_image_repo}:{from_scratch_hash}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--base_image', type=str, default='ubuntu:22.04')
-    parser.add_argument('--build_folder', type=str, default=None)
+    parser.add_argument("--base_image", type=str, default="ubuntu:22.04")
+    parser.add_argument("--build_folder", type=str, default=None)
     args = parser.parse_args()
 
     if args.build_folder is not None:
         build_folder = args.build_folder
         assert os.path.exists(
             build_folder
-        ), f'Build folder {build_folder} does not exist'
+        ), f"Build folder {build_folder} does not exist"
         logger.info(
-            f'Will prepare a build folder by copying the source code and generating the Dockerfile: {build_folder}'
+            f"Will prepare a build folder by copying the source code and generating the Dockerfile: {build_folder}"
         )
         runtime_image_repo, runtime_image_tag = get_runtime_image_repo_and_tag(
             args.base_image
@@ -375,29 +384,29 @@ if __name__ == '__main__':
                 dry_run=True,
             )
             _runtime_image_repo, runtime_image_hash_tag = runtime_image_hash_name.split(
-                ':'
+                ":"
             )
             # Move contents of temp_dir to build_folder
             shutil.copytree(temp_dir, build_folder, dirs_exist_ok=True)
         logger.info(
-            f'Build folder [{build_folder}] is ready: {os.listdir(build_folder)}'
+            f"Build folder [{build_folder}] is ready: {os.listdir(build_folder)}"
         )
 
-        with open(os.path.join(build_folder, 'config.sh'), 'a') as file:
+        with open(os.path.join(build_folder, "config.sh"), "a") as file:
             file.write(
                 (
-                    f'\n'
-                    f'DOCKER_IMAGE={runtime_image_repo}\n'
-                    f'DOCKER_IMAGE_TAG={runtime_image_tag}\n'
-                    f'DOCKER_IMAGE_HASH_TAG={runtime_image_hash_tag}\n'
+                    f"\n"
+                    f"DOCKER_IMAGE={runtime_image_repo}\n"
+                    f"DOCKER_IMAGE_TAG={runtime_image_tag}\n"
+                    f"DOCKER_IMAGE_HASH_TAG={runtime_image_hash_tag}\n"
                 )
             )
         logger.info(
-            f'`config.sh` is updated with the new image name [{runtime_image_repo}] and tag [{runtime_image_tag}, {runtime_image_hash_tag}]'
+            f"`config.sh` is updated with the new image name [{runtime_image_repo}] and tag [{runtime_image_tag}, {runtime_image_hash_tag}]"
         )
-        logger.info(f'Dockerfile and source distribution are ready in {build_folder}')
+        logger.info(f"Dockerfile and source distribution are ready in {build_folder}")
     else:
-        logger.info('Building image in a temporary folder')
+        logger.info("Building image in a temporary folder")
         client = docker.from_env()
         image_name = build_runtime_image(args.base_image, client)
-        print(f'\nBUILT Image: {image_name}\n')
+        print(f"\nBUILT Image: {image_name}\n")
