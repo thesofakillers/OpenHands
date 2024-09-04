@@ -185,6 +185,8 @@ class EventStreamRuntime(Runtime):
                 environment={"DEBUG": "true"} if self.config.debug else None,
                 volumes=volumes,
                 device_requests=device_requests,
+                mem_limit=self.config.sandbox.mem_limit,
+                shm_size=self.config.sandbox.shm_size,
             )
             logger.info(f"Container started. Server url: {self.api_url}")
             return container
