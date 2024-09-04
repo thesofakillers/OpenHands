@@ -4,9 +4,11 @@ import tempfile
 import uuid
 from typing import Optional
 from zipfile import ZipFile
+import subprocess
 
 import aiohttp
 import docker
+from docker.types import DeviceRequest
 import tenacity
 
 from opendevin.core.config import AppConfig
@@ -40,13 +42,13 @@ class EventStreamRuntime(Runtime):
     When receive an event, it will send the event to od-runtime-client which run inside the docker environment.
     """
 
-    container_name_prefix = 'opendevin-sandbox-'
+    container_name_prefix = "opendevin-sandbox-"
 
     def __init__(
         self,
         config: AppConfig,
         event_stream: EventStream,
-        sid: str = 'default',
+        sid: str = "default",
         plugins: list[PluginRequirement] | None = None,
         container_image: str | None = None,
     ):
@@ -54,7 +56,7 @@ class EventStreamRuntime(Runtime):
             config, event_stream, sid, plugins
         )  # will initialize the event stream
         self._port = find_available_tcp_port()
-        self.api_url = f'http://localhost:{self._port}'
+        self.api_url = f"http://localhost:{self._port}"
         self.session: Optional[aiohttp.ClientSession] = None
 
         self.instance_id = (
@@ -71,12 +73,12 @@ class EventStreamRuntime(Runtime):
 
         self.container = None
         self.action_semaphore = asyncio.Semaphore(1)  # Ensure one action at a time
-        logger.debug(f'EventStreamRuntime `{sid}` config:\n{self.config}')
+        logger.debug(f"EventStreamRuntime `{sid}` config:\n{self.config}")
 
     async def ainit(self, env_vars: dict[str, str] | None = None):
         if self.config.sandbox.od_runtime_extra_deps:
             logger.info(
-                f'Installing extra user-provided dependencies in the runtime image: {self.config.sandbox.od_runtime_extra_deps}'
+                f"Installing extra user-provided dependencies in the runtime image: {self.config.sandbox.od_runtime_extra_deps}"
             )
 
         self.container_image = build_runtime_image(
@@ -94,9 +96,9 @@ class EventStreamRuntime(Runtime):
         await super().ainit(env_vars)
 
         logger.info(
-            f'Container initialized with plugins: {[plugin.name for plugin in self.plugins]}'
+            f"Container initialized with plugins: {[plugin.name for plugin in self.plugins]}"
         )
-        logger.info(f'Container initialized with env vars: {env_vars}')
+        logger.info(f"Container initialized with env vars: {env_vars}")
 
         await self._init_git_config()
 
@@ -106,7 +108,7 @@ class EventStreamRuntime(Runtime):
             return docker.from_env()
         except Exception as ex:
             logger.error(
-                'Launch docker client failed. Please make sure you have installed docker and started the docker daemon.'
+                "Launch docker client failed. Please make sure you have installed docker and started the docker daemon."
             )
             raise ex
 
@@ -122,9 +124,9 @@ class EventStreamRuntime(Runtime):
     ):
         try:
             logger.info(
-                f'Starting container with image: {self.container_image} and name: {self.container_name}'
+                f"Starting container with image: {self.container_image} and name: {self.container_name}"
             )
-            plugin_arg = ''
+            plugin_arg = ""
             if plugins is not None and len(plugins) > 0:
                 plugin_arg = (
                     f'--plugins {" ".join([plugin.name for plugin in plugins])} '
@@ -133,28 +135,36 @@ class EventStreamRuntime(Runtime):
             network_mode: str | None = None
             port_mapping: dict[str, int] | None = None
             if self.config.sandbox.use_host_network:
-                network_mode = 'host'
+                network_mode = "host"
                 logger.warn(
-                    'Using host network mode. If you are using MacOS, please make sure you have the latest version of Docker Desktop and enabled host network feature: https://docs.docker.com/network/drivers/host/#docker-desktop'
+                    "Using host network mode. If you are using MacOS, please make sure you have the latest version of Docker Desktop and enabled host network feature: https://docs.docker.com/network/drivers/host/#docker-desktop"
                 )
             else:
-                port_mapping = {f'{self._port}/tcp': self._port}
+                port_mapping = {f"{self._port}/tcp": self._port}
 
             if mount_dir is not None:
-                volumes = {mount_dir: {'bind': sandbox_workspace_dir, 'mode': 'rw'}}
-                logger.info(f'Mount dir: {sandbox_workspace_dir}')
+                volumes = {mount_dir: {"bind": sandbox_workspace_dir, "mode": "rw"}}
+                logger.info(f"Mount dir: {sandbox_workspace_dir}")
             else:
                 logger.warn(
-                    'Mount dir is not set, will not mount the workspace directory to the container.'
+                    "Mount dir is not set, will not mount the workspace directory to the container."
                 )
                 volumes = None
 
             if self.config.sandbox.browsergym_eval_env is not None:
                 browsergym_arg = (
-                    f'--browsergym-eval-env {self.config.sandbox.browsergym_eval_env}'
+                    f"--browsergym-eval-env {self.config.sandbox.browsergym_eval_env}"
                 )
             else:
-                browsergym_arg = ''
+                browsergym_arg = ""
+            # enable gpu if available in the host
+            enable_gpu = check_nvidia_smi()
+            device_requests = (
+                [DeviceRequest(count=-1, capabilities=[["gpu"]])]
+                if enable_gpu
+                else None
+            )
+
             container = self.docker_client.containers.run(
                 self.container_image,
                 command=(
@@ -169,16 +179,17 @@ class EventStreamRuntime(Runtime):
                 ),
                 network_mode=network_mode,
                 ports=port_mapping,
-                working_dir='/opendevin/code/',
+                working_dir="/opendevin/code/",
                 name=self.container_name,
                 detach=True,
-                environment={'DEBUG': 'true'} if self.config.debug else None,
+                environment={"DEBUG": "true"} if self.config.debug else None,
                 volumes=volumes,
+                device_requests=device_requests,
             )
-            logger.info(f'Container started. Server url: {self.api_url}')
+            logger.info(f"Container started. Server url: {self.api_url}")
             return container
         except Exception as e:
-            logger.error('Failed to start container')
+            logger.error("Failed to start container")
             logger.exception(e)
             await self.close(close_client=False)
             raise e
@@ -188,10 +199,10 @@ class EventStreamRuntime(Runtime):
             'git config --global user.name "opendevin" && '
             'git config --global user.email "opendevin@all-hands.dev"'
         )
-        logger.info(f'Setting git config: {action}')
+        logger.info(f"Setting git config: {action}")
         obs: Observation = await self.run_action(action)
         assert isinstance(obs, CmdOutputObservation)
-        assert obs.exit_code == 0, f'Failed to set git config: {obs}'
+        assert obs.exit_code == 0, f"Failed to set git config: {obs}"
 
     async def _ensure_session(self):
         await asyncio.sleep(1)
@@ -204,13 +215,13 @@ class EventStreamRuntime(Runtime):
         wait=tenacity.wait_exponential(multiplier=2, min=4, max=60),
     )
     async def _wait_until_alive(self):
-        logger.info('Reconnecting session')
+        logger.info("Reconnecting session")
         async with aiohttp.ClientSession() as session:
-            async with session.get(f'{self.api_url}/alive') as response:
+            async with session.get(f"{self.api_url}/alive") as response:
                 if response.status == 200:
                     return
                 else:
-                    msg = f'Action execution API is not alive. Response: {response}'
+                    msg = f"Action execution API is not alive. Response: {response}"
                     logger.error(msg)
                     raise RuntimeError(msg)
 
@@ -226,9 +237,9 @@ class EventStreamRuntime(Runtime):
         for container in containers:
             try:
                 if container.name.startswith(self.container_name_prefix):
-                    logs = container.logs(tail=1000).decode('utf-8')
+                    logs = container.logs(tail=1000).decode("utf-8")
                     logger.debug(
-                        f'==== Container logs ====\n{logs}\n==== End of container logs ===='
+                        f"==== Container logs ====\n{logs}\n==== End of container logs ===="
                     )
                     container.remove(force=True)
             except docker.errors.NotFound:
@@ -243,26 +254,26 @@ class EventStreamRuntime(Runtime):
 
         async with self.action_semaphore:
             if not action.runnable:
-                return NullObservation('')
+                return NullObservation("")
             action_type = action.action  # type: ignore[attr-defined]
             if action_type not in ACTION_TYPE_TO_CLASS:
-                return ErrorObservation(f'Action {action_type} does not exist.')
+                return ErrorObservation(f"Action {action_type} does not exist.")
             if not hasattr(self, action_type):
                 return ErrorObservation(
-                    f'Action {action_type} is not supported in the current runtime.'
+                    f"Action {action_type} is not supported in the current runtime."
                 )
 
-            logger.info('Awaiting session')
+            logger.info("Awaiting session")
             session = await self._ensure_session()
             await self._wait_until_alive()
 
             assert action.timeout is not None
 
             try:
-                logger.info('Executing command')
+                logger.info("Executing command")
                 async with session.post(
-                    f'{self.api_url}/execute_action',
-                    json={'action': event_to_dict(action)},
+                    f"{self.api_url}/execute_action",
+                    json={"action": event_to_dict(action)},
                     timeout=action.timeout,
                 ) as response:
                     if response.status == 200:
@@ -272,16 +283,16 @@ class EventStreamRuntime(Runtime):
                         return obs
                     else:
                         error_message = await response.text()
-                        logger.error(f'Error from server: {error_message}')
+                        logger.error(f"Error from server: {error_message}")
                         obs = ErrorObservation(
-                            f'Command execution failed: {error_message}'
+                            f"Command execution failed: {error_message}"
                         )
             except asyncio.TimeoutError:
-                logger.error('No response received within the timeout period.')
-                obs = ErrorObservation('Command execution timed out')
+                logger.error("No response received within the timeout period.")
+                obs = ErrorObservation("Command execution timed out")
             except Exception as e:
-                logger.error(f'Error during command execution: {e}')
-                obs = ErrorObservation(f'Command execution failed: {str(e)}')
+                logger.error(f"Error during command execution: {e}")
+                obs = ErrorObservation(f"Command execution failed: {str(e)}")
             return obs
 
     async def run(self, action: CmdRunAction) -> Observation:
@@ -310,7 +321,7 @@ class EventStreamRuntime(Runtime):
         self, host_src: str, sandbox_dest: str, recursive: bool = False
     ) -> None:
         if not os.path.exists(host_src):
-            raise FileNotFoundError(f'Source file {host_src} does not exist')
+            raise FileNotFoundError(f"Source file {host_src} does not exist")
 
         session = await self._ensure_session()
         await self._wait_until_alive()
@@ -318,11 +329,11 @@ class EventStreamRuntime(Runtime):
             if recursive:
                 # For recursive copy, create a zip file
                 with tempfile.NamedTemporaryFile(
-                    suffix='.zip', delete=False
+                    suffix=".zip", delete=False
                 ) as temp_zip:
                     temp_zip_path = temp_zip.name
 
-                with ZipFile(temp_zip_path, 'w') as zipf:
+                with ZipFile(temp_zip_path, "w") as zipf:
                     for root, _, files in os.walk(host_src):
                         for file in files:
                             file_path = os.path.join(root, file)
@@ -331,30 +342,30 @@ class EventStreamRuntime(Runtime):
                             )
                             zipf.write(file_path, arcname)
 
-                upload_data = {'file': open(temp_zip_path, 'rb')}
+                upload_data = {"file": open(temp_zip_path, "rb")}
             else:
                 # For single file copy
-                upload_data = {'file': open(host_src, 'rb')}
+                upload_data = {"file": open(host_src, "rb")}
 
-            params = {'destination': sandbox_dest, 'recursive': str(recursive).lower()}
+            params = {"destination": sandbox_dest, "recursive": str(recursive).lower()}
 
             async with session.post(
-                f'{self.api_url}/upload_file', data=upload_data, params=params
+                f"{self.api_url}/upload_file", data=upload_data, params=params
             ) as response:
                 if response.status == 200:
                     return
                 else:
                     error_message = await response.text()
-                    raise Exception(f'Copy operation failed: {error_message}')
+                    raise Exception(f"Copy operation failed: {error_message}")
 
         except asyncio.TimeoutError:
-            raise TimeoutError('Copy operation timed out')
+            raise TimeoutError("Copy operation timed out")
         except Exception as e:
-            raise RuntimeError(f'Copy operation failed: {str(e)}')
+            raise RuntimeError(f"Copy operation failed: {str(e)}")
         finally:
             if recursive:
                 os.unlink(temp_zip_path)
-            logger.info(f'Copy completed: host:{host_src} -> runtime:{sandbox_dest}')
+            logger.info(f"Copy completed: host:{host_src} -> runtime:{sandbox_dest}")
 
     async def list_files(self, path: str | None = None) -> list[str]:
         """List files in the sandbox.
@@ -366,10 +377,10 @@ class EventStreamRuntime(Runtime):
         try:
             data = {}
             if path is not None:
-                data['path'] = path
+                data["path"] = path
 
             async with session.post(
-                f'{self.api_url}/list_files', json=data
+                f"{self.api_url}/list_files", json=data
             ) as response:
                 if response.status == 200:
                     response_json = await response.json()
@@ -377,8 +388,32 @@ class EventStreamRuntime(Runtime):
                     return response_json
                 else:
                     error_message = await response.text()
-                    raise Exception(f'List files operation failed: {error_message}')
+                    raise Exception(f"List files operation failed: {error_message}")
         except asyncio.TimeoutError:
-            raise TimeoutError('List files operation timed out')
+            raise TimeoutError("List files operation timed out")
         except Exception as e:
-            raise RuntimeError(f'List files operation failed: {str(e)}')
+            raise RuntimeError(f"List files operation failed: {str(e)}")
+
+
+def check_nvidia_smi() -> bool:
+    try:
+        # Run nvidia-smi command and capture output
+        result = subprocess.run(
+            ["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+
+        if result.returncode == 0:
+            logger.info("`nvidia-smi` command executed successfully. GPU avaialable.")
+            return True
+        else:
+            logger.error("`nvidia-smi` command failed.")
+            logger.error(result.stderr)
+            return False
+    except FileNotFoundError:
+        logger.error(
+            "`nvidia-smi` command not found. GPU might not be installed or the drivers are not set up correctly."
+        )
+        return False
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        return False
